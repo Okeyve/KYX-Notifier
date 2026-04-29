@@ -1,0 +1,71 @@
+name: TikTok → Discord Notifier
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch:          # allow manual runs from the Actions tab
+    inputs:
+      mode:
+        description: "Modo de execução"
+        required: false
+        default: "normal"
+        type: choice
+        options:
+          - normal
+          - test     # envia notificação do vídeo mais recente sem alterar o estado
+
+permissions:
+  contents: write             # needed to commit seen_videos.json back to the repo
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Restore state cache (seen videos) ──────────────────────────────
+      - name: Restore seen_videos cache
+        uses: actions/cache@v4
+        with:
+          path: seen_videos.json
+          key: seen-videos-${{ github.ref_name }}
+          restore-keys: seen-videos-
+
+      # ── 5. Run the bot ─────────────────────────────────────────────────────
+      - name: Run TikTok bot
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TIKTOK_USERNAMES:    ${{ secrets.TIKTOK_USERNAMES }}
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "test" ]; then
+            echo "Rodando em modo de TESTE"
+            python test_bot.py
+          else
+            echo "Rodando em modo NORMAL"
+            python bot.py
+          fi
+
+      # ── 6. Save updated state ──────────────────────────────────────────────
+      #    (the cache@v4 step above will automatically save on post-run)
+      #    Optionally also commit the file so it persists across cache evictions:
+      - name: Commit seen_videos.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_videos.json || true
+          git diff --cached --quiet || git commit -m "chore: update seen_videos [skip ci]"
+          git push || true
